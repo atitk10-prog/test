@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Demo giám sát thi online (Camera + Micro + AI)</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 {
+      margin-top: 0;
+      margin-bottom: 10px;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 20px;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 10px;
+      padding: 15px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.08);
+    }
+    .video-box {
+      position: relative;
+      width: 100%;
+      max-width: 520px;
+      margin: 0 auto;
+    }
+    #video, #overlay {
+      width: 100%;
+      height: auto;
+      border-radius: 10px;
+      border: 1px solid #333;
+      background: #000;
+    }
+    #overlay {
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+    #status {
+      margin-top: 8px;
+      font-weight: bold;
+      text-align: center;
+    }
+    .badge-ok { color: #15803d; font-weight: bold; }
+    .badge-warn { color: #b45309; font-weight: bold; }
+    .badge-alert { color: #b91c1c; font-weight: bold; }
+    .badge-audio { color: #1d4ed8; font-weight: bold; }
+    .note { font-size: 13px; color: #6b7280; margin-top: 6px; text-align: center; }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    .stat-label { color: #4b5563; }
+    .stat-value { font-weight: bold; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid #e5e7eb;
+      padding: 6px;
+      text-align: left;
+    }
+    th {
+      background: #111827;
+      color: #f9fafb;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    tr:nth-child(even) td {
+      background: #f9fafb;
+    }
+    .log-box {
+      max-height: 260px;
+      overflow: auto;
+      margin-top: 10px;
+      border-radius: 6px;
+    }
+    button {
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      margin-top: 10px;
+      background: #2563eb;
+      color: #fff;
+    }
+    button:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+    @media (max-width: 900px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>Demo giám sát thi online (Camera + Micro + AI)</h1>
+  <p>
+    Chương trình này cần: <b>face-api.min.js</b> và thư mục <code>models/</code> đặt cùng thư mục với file này.
+    Sau khi chạy, hãy <b>cho phép trình duyệt sử dụng camera & micro</b>.
+  </p>
+
+  <button id="btnStart">Bắt đầu giám sát</button>
+
+  <div class="layout" style="margin-top: 15px;">
+    <!-- Cột trái: Camera + trạng thái -->
+    <div class="card">
+      <h2>Camera giám sát</h2>
+      <div class="video-box">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
+      <div id="status">Chưa bắt đầu. Nhấn "Bắt đầu giám sát".</div>
+      <div class="note">
+        <span class="badge-ok">1 khuôn mặt</span> – bình thường,
+        <span class="badge-warn">0 khuôn mặt</span> – rời khỏi khung hình,
+        <span class="badge-alert">&gt;1 khuôn mặt</span> – nghi có người hỗ trợ,
+        <span class="badge-audio">🔊 tiếng nói lớn liên tục</span> – nghi đang trao đổi.
+      </div>
+
+      <hr style="margin: 15px 0;">
+
+      <h3>Thống kê</h3>
+      <div class="stat-row">
+        <span class="stat-label">Điểm nghi vấn:</span>
+        <span class="stat-value" id="suspicionScore">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Số lần không thấy mặt &gt; 3s:</span>
+        <span class="stat-value" id="noFaceCount">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Số lần &gt; 1 khuôn mặt:</span>
+        <span class="stat-value" id="multiFaceCount">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Số lần tiếng nói lớn &gt; 4s:</span>
+        <span class="stat-value" id="speechCount">0</span>
+      </div>
+    </div>
+
+    <!-- Cột phải: Bảng log -->
+    <div class="card">
+      <h2>Nhật ký giám sát</h2>
+      <div class="log-box">
+        <table>
+          <thead>
+            <tr>
+              <th>Thời gian</th>
+              <th>Số mặt</th>
+              <th>Sự kiện</th>
+              <th>+Điểm</th>
+            </tr>
+          </thead>
+          <tbody id="logBody"></tbody>
+        </table>
+      </div>
+      <p style="font-size: 12px; color:#6b7280; margin-top: 8px;">
+        Trong hệ thống thật, các log này sẽ được gửi về server lưu kèm video/ảnh để giám thị xem lại.
+      </p>
+    </div>
+  </div>
+
+  <!-- face-api.js LOCAL (tải file face-api.min.js về và để cùng thư mục) -->
+  <script src="./face-api.min.js"></script>
+  <script>
+    const btnStart = document.getElementById('btnStart');
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const statusEl = document.getElementById('status');
+    const logBody = document.getElementById('logBody');
+
+    const suspicionScoreEl = document.getElementById('suspicionScore');
+    const noFaceCountEl = document.getElementById('noFaceCount');
+    const multiFaceCountEl = document.getElementById('multiFaceCount');
+    const speechCountEl = document.getElementById('speechCount');
+
+    const MODEL_URL = './models'; // thư mục models chứa weights
+
+    let overlayCtx = null;
+    let suspicionScore = 0;
+    let noFaceCount = 0;
+    let multiFaceCount = 0;
+    let speechCount = 0;
+    let lastFaceSeenTime = Date.now();
+
+    // Audio monitor
+    let audioContext = null;
+    let analyser = null;
+    let audioDataArray = null;
+    let speakingStartTime = null;
+    const SPEECH_THRESHOLD = 0.04;    // ngưỡng âm lượng
+    const SPEECH_MIN_DURATION = 4000; // 4s tiếng nói liên tục
+
+    function updateSuspicionUI() {
+      suspicionScoreEl.textContent = suspicionScore;
+      noFaceCountEl.textContent = noFaceCount;
+      multiFaceCountEl.textContent = multiFaceCount;
+      speechCountEl.textContent = speechCount;
+    }
+
+    function addLogRow(faceCount, eventText, deltaScore, type = 'video') {
+      const tr = document.createElement('tr');
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0];
+
+      const tdTime = document.createElement('td');
+      const tdCount = document.createElement('td');
+      const tdEvent = document.createElement('td');
+      const tdScore = document.createElement('td');
+
+      tdTime.textContent = timeStr;
+      tdCount.textContent = type === 'audio' ? '-' : faceCount;
+      tdEvent.textContent = eventText;
+      tdScore.textContent = deltaScore > 0 ? '+' + deltaScore : '';
+
+      if (type === 'audio') {
+        tdEvent.classList.add('badge-audio');
+      } else {
+        if (faceCount === 1) tdEvent.classList.add('badge-ok');
+        else if (faceCount === 0) tdEvent.classList.add('badge-warn');
+        else if (faceCount > 1) tdEvent.classList.add('badge-alert');
+      }
+
+      tr.appendChild(tdTime);
+      tr.appendChild(tdCount);
+      tr.appendChild(tdEvent);
+      tr.appendChild(tdScore);
+
+      logBody.prepend(tr);
+    }
+
+    async function initCameraAndAudio() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true
+        });
+        video.srcObject = stream;
+        video.addEventListener('loadedmetadata', () => {
+          overlay.width = video.videoWidth || overlay.width;
+          overlay.height = video.videoHeight || overlay.height;
+          overlayCtx = overlay.getContext('2d');
+        });
+
+        setupAudioMonitor(stream);
+      } catch (err) {
+        console.error('Không bật được camera/micro:', err);
+        statusEl.textContent = 'Lỗi: Không truy cập được camera/micro.';
+      }
+    }
+
+    function setupAudioMonitor(stream) {
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaStreamSource(stream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        audioDataArray = new Uint8Array(analyser.fftSize);
+        source.connect(analyser);
+        monitorAudioLevel();
+      } catch (e) {
+        console.error('Không khởi tạo được AudioContext:', e);
+      }
+    }
+
+    function monitorAudioLevel() {
+      if (!analyser || !audioDataArray) return;
+
+      function check() {
+        analyser.getByteTimeDomainData(audioDataArray);
+        let sum = 0;
+        for (let i = 0; i < audioDataArray.length; i++) {
+          const v = (audioDataArray[i] - 128) / 128.0;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / audioDataArray.length);
+        const now = Date.now();
+
+        if (rms > SPEECH_THRESHOLD) {
+          if (!speakingStartTime) {
+            speakingStartTime = now;
+          } else {
+            const duration = now - speakingStartTime;
+            if (duration > SPEECH_MIN_DURATION) {
+              speechCount += 1;
+              suspicionScore += 1;
+              addLogRow(0, 'Tiếng nói/âm thanh lớn liên tục > 4s', 1, 'audio');
+              updateSuspicionUI();
+              speakingStartTime = null;
+            }
+          }
+        } else {
+          speakingStartTime = null;
+        }
+
+        requestAnimationFrame(check);
+      }
+
+      check();
+    }
+
+    async function loadModels() {
+      statusEl.textContent = 'Đang tải mô hình AI (models)...';
+      await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+      await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
+      statusEl.textContent = 'Đã tải xong mô hình. Đang bật camera/micro...';
+    }
+
+    function startFaceMonitor() {
+      const options = new faceapi.TinyFaceDetectorOptions({
+        inputSize: 224,
+        scoreThreshold: 0.5
+      });
+
+      statusEl.textContent = 'Đang giám sát khuôn mặt & âm thanh...';
+
+      setInterval(async () => {
+        if (!overlayCtx) return;
+
+        const detections = await faceapi
+          .detectAllFaces(video, options)
+          .withFaceLandmarks(true);
+
+        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+        faceapi.draw.drawDetections(overlay, detections);
+        faceapi.draw.drawFaceLandmarks(overlay, detections);
+
+        const faceCount = detections.length;
+
+        if (faceCount === 0) {
+          statusEl.textContent = '⚠ Không thấy khuôn mặt.';
+          const noFaceDuration = Date.now() - lastFaceSeenTime;
+          if (noFaceDuration > 3000) {
+            suspicionScore += 1;
+            noFaceCount += 1;
+            lastFaceSeenTime = Date.now();
+            addLogRow(faceCount, 'Không thấy khuôn mặt > 3s', 1, 'video');
+            updateSuspicionUI();
+          }
+        } else if (faceCount === 1) {
+          statusEl.textContent = '✅ Đang thấy 1 khuôn mặt.';
+          lastFaceSeenTime = Date.now();
+        } else {
+          statusEl.textContent = '⚠ Phát hiện ' + faceCount + ' khuôn mặt! Nghi có người hỗ trợ.';
+          suspicionScore += 2;
+          multiFaceCount += 1;
+          addLogRow(faceCount, 'Phát hiện >1 khuôn mặt', 2, 'video');
+          updateSuspicionUI();
+        }
+      }, 400);
+    }
+
+    async function startAll() {
+      btnStart.disabled = true;
+      await loadModels();
+      await initCameraAndAudio();
+      video.addEventListener('playing', () => {
+        startFaceMonitor();
+      });
+    }
+
+    btnStart.addEventListener('click', startAll);
+  </script>
+</body>
+</html>
